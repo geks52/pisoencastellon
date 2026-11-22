@@ -676,6 +676,7 @@
       let tx = 0;
       let ty = 0;
       let dragging = false;
+      let didDrag = false;
       let startX = 0;
       let startY = 0;
       let originTx = 0;
@@ -723,7 +724,7 @@
         const caption = (a.dataset.caption || "") + " · " + (index + 1) + " / " + items.length;
         const zoomHint = scale > 1.01
           ? "Масштаб " + Math.round(scale * 100) + "% · тяни, чтобы сдвинуть"
-          : "Колёсико / двойной клик / + − для увеличения";
+          : "Клик / колёсико / + − для увеличения";
         meta.innerHTML = caption + "<small>" + zoomHint + "</small>";
       }
 
@@ -777,8 +778,11 @@
         updateMeta();
       }, { passive: false });
 
-      stage.addEventListener("dblclick", (e) => {
-        e.preventDefault();
+      stage.addEventListener("click", (e) => {
+        if (didDrag) {
+          didDrag = false;
+          return;
+        }
         if (scale > 1.01) resetZoom();
         else zoomAt(e.clientX, e.clientY, 2.5);
         updateMeta();
@@ -786,6 +790,7 @@
 
       stage.addEventListener("pointerdown", (e) => {
         if (e.button !== 0) return;
+        didDrag = false;
         if (scale <= 1.01) return;
         dragging = true;
         startX = e.clientX;
@@ -798,8 +803,11 @@
 
       stage.addEventListener("pointermove", (e) => {
         if (!dragging) return;
-        tx = originTx + (e.clientX - startX);
-        ty = originTy + (e.clientY - startY);
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        if (Math.abs(dx) + Math.abs(dy) > 4) didDrag = true;
+        tx = originTx + dx;
+        ty = originTy + dy;
         applyTransform();
       });
 
