@@ -213,28 +213,60 @@
       display: none; align-items: center; justify-content: center;
       background: rgba(10, 14, 12, 0.92);
       padding: 1rem;
+      touch-action: none;
     }
     .lb.open { display: flex; }
-    .lb img {
-      max-width: min(96vw, 1400px);
-      max-height: 88vh;
-      object-fit: contain;
+    .lb-stage {
+      position: relative;
+      width: min(96vw, 1400px);
+      height: 88vh;
+      overflow: hidden;
       border-radius: 6px;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+      cursor: zoom-in;
+      user-select: none;
     }
-    .lb-close, .lb-prev, .lb-next {
+    .lb-stage.zoomed { cursor: grab; }
+    .lb-stage.dragging { cursor: grabbing; }
+    .lb-stage img {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      max-width: 100%;
+      max-height: 100%;
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      transform: translate(-50%, -50%) scale(1);
+      transform-origin: center center;
+      transition: transform 0.12s ease-out;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+      pointer-events: none;
+    }
+    .lb-stage.dragging img { transition: none; }
+    .lb-close, .lb-prev, .lb-next, .lb-zoom-btn {
       position: absolute; border: 0; cursor: pointer;
       background: rgba(255,255,255,0.12); color: #fff;
       width: 44px; height: 44px; border-radius: 50%;
       font-size: 1.3rem; line-height: 1;
+      z-index: 2;
     }
     .lb-close { top: 1rem; right: 1rem; }
     .lb-prev { left: 1rem; top: 50%; transform: translateY(-50%); }
     .lb-next { right: 1rem; top: 50%; transform: translateY(-50%); }
+    .lb-zoom {
+      position: absolute; top: 1rem; left: 1rem;
+      display: flex; gap: 0.4rem; z-index: 2;
+    }
+    .lb-zoom-btn { position: static; font-size: 1.15rem; font-weight: 600; }
     .lb-meta {
       position: absolute; bottom: 1rem; left: 50%; transform: translateX(-50%);
       color: #eee; font-size: 0.9rem; text-align: center;
-      max-width: 90vw;
+      max-width: 90vw; z-index: 2;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.7);
+    }
+    .lb-meta small {
+      display: block; margin-top: 0.25rem;
+      opacity: 0.75; font-size: 0.78rem;
     }
   </style>
 </head>
@@ -617,10 +649,17 @@
   </main>
 
   <div class="lb" id="lightbox" aria-hidden="true">
+    <div class="lb-zoom">
+      <button class="lb-zoom-btn" type="button" data-zoom="out" aria-label="Уменьшить">−</button>
+      <button class="lb-zoom-btn" type="button" data-zoom="in" aria-label="Увеличить">+</button>
+      <button class="lb-zoom-btn" type="button" data-zoom="reset" aria-label="Сбросить масштаб">1:1</button>
+    </div>
     <button class="lb-close" type="button" aria-label="Закрыть">×</button>
     <button class="lb-prev" type="button" aria-label="Предыдущее">‹</button>
     <button class="lb-next" type="button" aria-label="Следующее">›</button>
-    <img id="lb-img" alt="" />
+    <div class="lb-stage" id="lb-stage">
+      <img id="lb-img" alt="" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" />
+    </div>
     <div class="lb-meta" id="lb-meta"></div>
   </div>
 
@@ -628,22 +667,83 @@
     (function () {
       const items = Array.from(document.querySelectorAll("a.lb-item"));
       const lb = document.getElementById("lightbox");
+      const stage = document.getElementById("lb-stage");
       const img = document.getElementById("lb-img");
       const meta = document.getElementById("lb-meta");
+      const MIN_SCALE = 1;
+      const MAX_SCALE = 5;
+      const STEP = 0.35;
       let index = 0;
+      let scale = 1;
+      let tx = 0;
+      let ty = 0;
+      let dragging = false;
+      let startX = 0;
+      let startY = 0;
+      let originTx = 0;
+      let originTy = 0;
+      let pinchStartDist = 0;
+      let pinchStartScale = 1;
+
+      function clamp(v, min, max) {
+        return Math.min(max, Math.max(min, v));
+      }
+
+      function applyTransform() {
+        img.style.transform = "translate(calc(-50% + " + tx + "px), calc(-50% + " + ty + "px)) scale(" + scale + ")";
+        stage.classList.toggle("zoomed", scale > 1.01);
+        if (scale <= 1.01) {
+          tx = 0;
+          ty = 0;
+          img.style.transform = "translate(-50%, -50%) scale(1)";
+          stage.classList.remove("zoomed");
+        }
+      }
+
+      function resetZoom() {
+        scale = 1;
+        tx = 0;
+        ty = 0;
+        applyTransform();
+      }
+
+      function zoomAt(clientX, clientY, nextScale) {
+        const rect = stage.getBoundingClientRect();
+        const cx = clientX - rect.left - rect.width / 2;
+        const cy = clientY - rect.top - rect.height / 2;
+        const prev = scale;
+        scale = clamp(nextScale, MIN_SCALE, MAX_SCALE);
+        if (scale === prev) return;
+        const ratio = scale / prev;
+        tx = cx - (cx - tx) * ratio;
+        ty = cy - (cy - ty) * ratio;
+        applyTransform();
+      }
+
+      function updateMeta() {
+        const a = items[index];
+        const caption = (a.dataset.caption || "") + " · " + (index + 1) + " / " + items.length;
+        const zoomHint = scale > 1.01
+          ? "Масштаб " + Math.round(scale * 100) + "% · тяни, чтобы сдвинуть"
+          : "Колёсико / двойной клик / + − для увеличения";
+        meta.innerHTML = caption + "<small>" + zoomHint + "</small>";
+      }
 
       function openAt(i) {
         index = (i + items.length) % items.length;
         const a = items[index];
+        resetZoom();
         img.src = a.getAttribute("href");
-        meta.textContent = (a.dataset.caption || "") + " · " + (index + 1) + " / " + items.length;
+        updateMeta();
         lb.classList.add("open");
         lb.setAttribute("aria-hidden", "false");
       }
+
       function close() {
         lb.classList.remove("open");
         lb.setAttribute("aria-hidden", "true");
-        img.removeAttribute("src");
+        resetZoom();
+        img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
       }
 
       items.forEach((a, i) => {
@@ -657,11 +757,110 @@
       lb.querySelector(".lb-prev").addEventListener("click", () => openAt(index - 1));
       lb.querySelector(".lb-next").addEventListener("click", () => openAt(index + 1));
       lb.addEventListener("click", (e) => { if (e.target === lb) close(); });
+
+      lb.querySelectorAll("[data-zoom]").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const rect = stage.getBoundingClientRect();
+          const cx = rect.left + rect.width / 2;
+          const cy = rect.top + rect.height / 2;
+          const action = btn.getAttribute("data-zoom");
+          if (action === "in") zoomAt(cx, cy, scale + STEP);
+          else if (action === "out") zoomAt(cx, cy, scale - STEP);
+          else resetZoom();
+          updateMeta();
+        });
+      });
+
+      stage.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        const delta = e.deltaY < 0 ? STEP : -STEP;
+        zoomAt(e.clientX, e.clientY, scale + delta);
+        updateMeta();
+      }, { passive: false });
+
+      stage.addEventListener("dblclick", (e) => {
+        e.preventDefault();
+        if (scale > 1.01) resetZoom();
+        else zoomAt(e.clientX, e.clientY, 2.5);
+        updateMeta();
+      });
+
+      stage.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        if (scale <= 1.01) return;
+        dragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        originTx = tx;
+        originTy = ty;
+        stage.classList.add("dragging");
+        stage.setPointerCapture(e.pointerId);
+      });
+
+      stage.addEventListener("pointermove", (e) => {
+        if (!dragging) return;
+        tx = originTx + (e.clientX - startX);
+        ty = originTy + (e.clientY - startY);
+        applyTransform();
+      });
+
+      function endDrag(e) {
+        if (!dragging) return;
+        dragging = false;
+        stage.classList.remove("dragging");
+        try { stage.releasePointerCapture(e.pointerId); } catch (_) {}
+      }
+
+      stage.addEventListener("pointerup", endDrag);
+      stage.addEventListener("pointercancel", endDrag);
+
+      stage.addEventListener("touchstart", (e) => {
+        if (e.touches.length === 2) {
+          const [a, b] = e.touches;
+          pinchStartDist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+          pinchStartScale = scale;
+          dragging = false;
+        }
+      }, { passive: true });
+
+      stage.addEventListener("touchmove", (e) => {
+        if (e.touches.length !== 2) return;
+        e.preventDefault();
+        const [a, b] = e.touches;
+        const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        const midX = (a.clientX + b.clientX) / 2;
+        const midY = (a.clientY + b.clientY) / 2;
+        zoomAt(midX, midY, pinchStartScale * (dist / pinchStartDist));
+        updateMeta();
+      }, { passive: false });
+
       document.addEventListener("keydown", (e) => {
         if (!lb.classList.contains("open")) return;
-        if (e.key === "Escape") close();
-        if (e.key === "ArrowLeft") openAt(index - 1);
-        if (e.key === "ArrowRight") openAt(index + 1);
+        if (e.key === "Escape") {
+          if (scale > 1.01) {
+            resetZoom();
+            updateMeta();
+          } else {
+            close();
+          }
+        }
+        if (e.key === "ArrowLeft" && scale <= 1.01) openAt(index - 1);
+        if (e.key === "ArrowRight" && scale <= 1.01) openAt(index + 1);
+        if (e.key === "+" || e.key === "=") {
+          const rect = stage.getBoundingClientRect();
+          zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, scale + STEP);
+          updateMeta();
+        }
+        if (e.key === "-" || e.key === "_") {
+          const rect = stage.getBoundingClientRect();
+          zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, scale - STEP);
+          updateMeta();
+        }
+        if (e.key === "0") {
+          resetZoom();
+          updateMeta();
+        }
       });
     })();
   </script>
