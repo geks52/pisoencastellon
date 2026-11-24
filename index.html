@@ -258,6 +258,22 @@
       display: flex; gap: 0.4rem; z-index: 2;
     }
     .lb-zoom-btn { position: static; font-size: 1.15rem; font-weight: 600; }
+    .lb-download {
+      position: static;
+      width: auto;
+      height: 44px;
+      padding: 0 1rem;
+      border: 0;
+      border-radius: 999px;
+      cursor: pointer;
+      background: rgba(255,255,255,0.12);
+      color: #fff;
+      font-size: 0.9rem;
+      font-weight: 600;
+      white-space: nowrap;
+      z-index: 2;
+    }
+    .lb-download:hover { background: rgba(255,255,255,0.22); }
     .lb-meta {
       position: absolute; bottom: 1rem; left: 50%; transform: translateX(-50%);
       color: #eee; font-size: 0.9rem; text-align: center;
@@ -651,6 +667,7 @@
       <button class="lb-zoom-btn" type="button" data-zoom="out" aria-label="Уменьшить">−</button>
       <button class="lb-zoom-btn" type="button" data-zoom="in" aria-label="Увеличить">+</button>
       <button class="lb-zoom-btn" type="button" data-zoom="reset" aria-label="Сбросить масштаб">1:1</button>
+      <button class="lb-download" type="button" id="lb-download">Скачать фото</button>
     </div>
     <button class="lb-close" type="button" aria-label="Закрыть">×</button>
     <button class="lb-prev" type="button" aria-label="Предыдущее">‹</button>
@@ -769,6 +786,21 @@
           else resetZoom();
           updateMeta();
         });
+      });
+
+      document.getElementById("lb-download").addEventListener("click", (e) => {
+        e.stopPropagation();
+        const a = items[index];
+        if (!a) return;
+        const href = a.getAttribute("href");
+        const name = (href && href.split("/").pop()) || ("foto-" + (index + 1) + ".jpg");
+        const link = document.createElement("a");
+        link.href = href;
+        link.download = name;
+        link.rel = "noopener";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
       });
 
       stage.addEventListener("wheel", (e) => {
